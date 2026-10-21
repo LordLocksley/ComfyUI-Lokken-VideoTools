@@ -1,0 +1,16 @@
+[project]
+name = "lokken-videotools"
+version = "1.0.0"
+description = "Standalone video post-processing with film grain and configurable H.264 encoder presets and profiles."
+readme = "README.md"
+license = { text = "GPL-3.0-or-later AND AGPL-3.0-only" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/LordLocksley/ComfyUI-Lokken-VideoTools"
+Documentation = "https://github.com/LordLocksley/ComfyUI-Lokken-VideoTools#readme"
+"Bug Tracker" = "https://github.com/LordLocksley/ComfyUI-Lokken-VideoTools/issues"
+
+[tool.comfy]
+PublisherId = "lokken"
+DisplayName = "Lokken VideoTools"
