@@ -13,10 +13,13 @@ Lanczos upscaling work without Fill Nodes.
 
 ## Status and installation
 
-The standalone implementation is available from this repository. Version 1.0.0
-has been uploaded to [Comfy Registry](https://registry.comfy.org/nodes/lokken-videotools);
-check the listing for release availability. To install manually, run the following
-from your `ComfyUI/custom_nodes/` directory:
+Version 1.0.0 is published on [Comfy Registry](https://registry.comfy.org/nodes/lokken-videotools)
+and available through ComfyUI-Manager. Open Manager's custom-node list, search for
+**Lokken VideoTools**, install it, and restart ComfyUI. If the package is missing
+from the list, refresh the listing and check its filters.
+
+Alternatively, install manually by running the following from your
+`ComfyUI/custom_nodes/` directory:
 
 ```sh
 git clone https://github.com/LordLocksley/ComfyUI-Lokken-VideoTools.git

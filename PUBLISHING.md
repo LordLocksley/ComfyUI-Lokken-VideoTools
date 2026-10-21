@@ -1,41 +1,61 @@
 # Publishing to Comfy Registry
 
-The package is prepared as `lokken-videotools` version `1.0.0`, under publisher
-`lokken`. It has not yet been published. Registry publication makes it available
-to ComfyUI-Manager, subject to Registry checks and indexing.
+`lokken-videotools` version `1.0.0` is published under publisher `lokken` and
+available through ComfyUI-Manager. These instructions cover future releases.
 
 ## Preparation
 
-Install Comfy CLI in a separate development environment, not in ComfyUI's
-embedded Python. For example, with a separately installed Python:
+Install Comfy CLI in a Python environment chosen for publishing. A separate
+virtual environment is optional and keeps publishing dependencies isolated;
+an existing development Python can also be used after checking dependency changes.
+Comfy CLI is a publishing tool, not a runtime dependency of the node.
+
+For example, to create an isolated environment with a separately installed Python:
 
 ```powershell
 python -m venv "$env:LOCALAPPDATA\LokkenVideoTools\registry-cli"
 & "$env:LOCALAPPDATA\LokkenVideoTools\registry-cli\Scripts\python.exe" -m pip install comfy-cli
 ```
 
-This environment is a publishing tool only; it is not a runtime dependency of
-the node. The node itself uses ComfyUI's existing packages.
+In the commands below, use your chosen Python interpreter in place of `python`
+if it is not the one on PATH. Before the first CLI launch, disable telemetry:
 
-## Publish when ready
+```powershell
+$env:COMFY_NO_TELEMETRY = '1'
+python -m comfy_cli tracking disable
+```
 
-1. Confirm `pyproject.toml` has the intended publisher, package name and version.
-   Registry identifiers cannot be changed after creation; each published version
-   is immutable.
-2. Commit and push the intended source first. Confirm `git status --short` is
-   empty and run the bounded checks in [tests/README.md](tests/README.md).
+The command saves the tracking opt-out. The environment variable also suppresses
+telemetry for the current PowerShell session; set it in future publishing sessions
+as shown below.
+
+## Publish a new version
+
+1. Update the version in `pyproject.toml` and confirm the intended publisher and
+   package name. Registry identifiers cannot be changed after creation. Use a new
+   version for each release; the existing `1.0.0` archive is not replaced.
+2. Run the bounded checks in [tests/README.md](tests/README.md), then commit and
+   push the intended source. Review `git status --short` for unexpected files.
+   The CLI's generated `node.zip` need not be committed.
 3. In this repository's directory, run:
 
    ```powershell
-   & "$env:LOCALAPPDATA\LokkenVideoTools\registry-cli\Scripts\comfy.exe" node publish
+   $env:COMFY_NO_TELEMETRY = '1'
+   python -m comfy_cli node publish
    ```
 
 4. Enter the Registry PAT at the hidden prompt. Do not put it in a command,
    source file, screenshot, issue or chat message.
-5. Check the Registry result and Manager availability before announcing release.
+5. Check the [version status](https://api.comfy.org/nodes/lokken-videotools/versions?include_status_reason=true).
+   Upload success confirms transfer. `NodeVersionStatusActive` means the release
+   is active; `Pending` or `Flagged` requires further processing or attention.
+   The separate `comfy_node_extract_status` tracks the catalogue of individual
+   nodes and can remain pending after activation. Check Manager availability
+   before announcing a new release.
 
 No automatic publishing action is installed. Pushing to GitHub does not publish
-to the Registry.
+to the Registry. GitHub documentation can be newer than the documentation inside
+an existing Registry archive; corrected files accompany the next release.
 
 ## Package contents and licensing
 
@@ -47,8 +67,7 @@ The metadata records both GPL and AGPL obligations. See [NOTICE.md](NOTICE.md)
 for their component scope. Do not replace this with GPL-only metadata.
 
 The standalone node has a distinct identifier and exposes encoder controls absent
-from the original upstream node. Registry fork acceptance and indexing are still
-subject to Registry review; preparing metadata does not guarantee acceptance.
+from the original upstream node. Future releases remain subject to Registry checks.
 
 Official references: [publishing](https://docs.comfy.org/registry/publishing),
 [metadata](https://docs.comfy.org/registry/specifications), and
