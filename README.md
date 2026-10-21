@@ -1,14 +1,22 @@
 # ComfyUI Lokken VideoTools
 
-One video post-processing node for ComfyUI, derived from the Turbo Post
-Processing node in [Elvax Nodes](https://github.com/younestft/Elvax-nodes),
-with configurable H.264 encoder presets and profiles.
+One video post-processing node for ComfyUI: Lanczos upscaling, optional RIFE
+frame interpolation, adjustable film grain, audio passthrough and H.264 encoding
+with configurable presets, profiles and CRF or lossless mode. Accepts video or
+image batches, supports selectable frame batching, and returns video, FPS and
+timing statistics. Derived from the Turbo Post Processing node in
+[Elvax Nodes](https://github.com/younestft/Elvax-nodes).
+
+**RIFE interpolation requires Fill Nodes and its `rife49` model.** It supports
+frame-rate multiplication and optional dual-pass RIFE. Encoding, grain and
+Lanczos upscaling work without Fill Nodes.
 
 ## Status and installation
 
-The standalone implementation is available from this repository. It has not yet
-been published to Comfy Registry. To install manually, run the following from
-your `ComfyUI/custom_nodes/` directory:
+The standalone implementation is available from this repository. Version 1.0.0
+has been uploaded to [Comfy Registry](https://registry.comfy.org/nodes/lokken-videotools);
+check the listing for release availability. To install manually, run the following
+from your `ComfyUI/custom_nodes/` directory:
 
 ```sh
 git clone https://github.com/LordLocksley/ComfyUI-Lokken-VideoTools.git
@@ -36,6 +44,11 @@ ComfyUI's Save Video node.
 
 | Setting | Meaning |
 | --- | --- |
+| `upscale` / `upscale_by` | Enables native Lanczos spatial scaling and sets the scale factor. |
+| `interpolate` / `interpolate_by` | Enables RIFE frame interpolation and sets the frame-rate multiplier. Requires Fill Nodes and `rife49`. |
+| `dual_pass_rife` | Runs RIFE in both directions and combines the results, trading additional processing time and VRAM for potentially better interpolation. |
+| `original_fps` | Sets the source frame rate for image batches; a connected video supplies its own frame rate. |
+| `audio_pass` | Supplies audio for the output. If omitted, the source video's audio is retained when available. |
 | `encoder_preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. Default: `medium`. Slower presets trade encoding time for compression efficiency. |
 | `h264_profile` | `auto`, `baseline`, `main`, `high`. Default: `auto`, leaving the profile constraint unset. A forced profile constrains allowed features; the actual profile can be lower when a preset disables those features. |
 | `compress` / `crf` | Compression is on by default at CRF 18. Disabling compression or setting CRF 0 uses the inherited encoder's lossless mode. That mode requires profile `auto`; forced profiles produce an error. |

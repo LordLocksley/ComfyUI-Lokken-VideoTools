@@ -1,7 +1,7 @@
 [project]
 name = "lokken-videotools"
 version = "1.0.0"
-description = "Standalone video post-processing with film grain and configurable H.264 encoder presets and profiles."
+description = "Video post-processing for ComfyUI: Lanczos upscaling, optional RIFE frame interpolation (Fill Nodes required), adjustable film grain, audio passthrough, configurable H.264 presets/profiles and CRF or lossless encoding, with selectable frame batching. Accepts video or image batches; outputs video, FPS and timing statistics."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later AND AGPL-3.0-only" }
 dependencies = []

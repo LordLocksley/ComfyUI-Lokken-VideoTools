@@ -87,7 +87,7 @@ class PostProcessing:
     RETURN_NAMES = ("VIDEO", "FPS", "stats")
     FUNCTION = "process"
     CATEGORY = "Lokken/Video"
-    DESCRIPTION = "Upscale, interpolate, and add film grain, then provide a disk-backed video for Save Video."
+    DESCRIPTION = "Video post-processing for ComfyUI: Lanczos upscaling, optional RIFE frame interpolation (Fill Nodes required), adjustable film grain, audio passthrough, configurable H.264 presets/profiles and CRF or lossless encoding, with selectable frame batching. Accepts video or image batches; outputs video, FPS and timing statistics."
 
     @classmethod
     def _open_rife(cls, images, low_vram):
