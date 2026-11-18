@@ -1,7 +1,7 @@
 # ComfyUI Lokken VideoTools
 
 One video post-processing node for ComfyUI: Lanczos upscaling, optional RIFE
-frame interpolation, adjustable film grain, audio passthrough and H.264 encoding
+frame interpolation, adjustable film grain, automatic join tone matching, audio passthrough and H.264 encoding
 with configurable presets, profiles and CRF or lossless mode. Accepts video or
 image batches, supports selectable frame batching, and returns video, FPS and
 timing statistics. Derived from the Turbo Post Processing node in
@@ -13,7 +13,7 @@ Lanczos upscaling work without Fill Nodes.
 
 ## Status and installation
 
-Version 1.0.0 is published on [Comfy Registry](https://registry.comfy.org/nodes/lokken-videotools)
+Lokken VideoTools is published on [Comfy Registry](https://registry.comfy.org/nodes/lokken-videotools)
 and available through ComfyUI-Manager. Open Manager's custom-node list, search for
 **Lokken VideoTools**, install it, and restart ComfyUI. If the package is missing
 from the list, refresh the listing and check its filters.
@@ -52,6 +52,7 @@ ComfyUI's Save Video node.
 | `dual_pass_rife` | Runs RIFE in both directions and combines the results, trading additional processing time and VRAM for potentially better interpolation. |
 | `original_fps` | Sets the source frame rate for image batches; a connected video supplies its own frame rate. |
 | `audio_pass` | Supplies audio for the output. If omitted, the source video's audio is retained when available. |
+| `tone_reference` | Optional encoded previous segment. Matches the opening brightness of the new segment to the reference tail during H.264 encoding. |
 | `encoder_preset` | `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. Default: `medium`. Slower presets trade encoding time for compression efficiency. |
 | `h264_profile` | `auto`, `baseline`, `main`, `high`. Default: `auto`, leaving the profile constraint unset. A forced profile constrains allowed features; the actual profile can be lower when a preset disables those features. |
 | `compress` / `crf` | Compression is on by default at CRF 18. Disabling compression or setting CRF 0 uses the inherited encoder's lossless mode. That mode requires profile `auto`; forced profiles produce an error. |
@@ -63,6 +64,11 @@ preset and profile on both encoders. The node retains the fork's four-frame
 encoding handoff and disk-backed temporary video output; it does not eliminate
 memory occupied by the input image batch. Temporary files remain alive while
 their video objects are retained, including by ComfyUI's cache.
+
+Tone matching samples up to eight frames on each side of the join, measures
+the luma difference in low-motion, well-matched areas, and applies the signed
+correction to the incoming segment. It preserves chroma and frame timing. For
+joins with a deliberate change in lighting, leave the reference input empty.
 
 The inherited timing summary tracks workflow start through a local
 `PromptServer.send_sync` wrapper. It forwards events to the existing handler.

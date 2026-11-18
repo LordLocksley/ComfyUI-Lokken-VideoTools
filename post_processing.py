@@ -12,6 +12,7 @@ import queue
 import tempfile
 import threading
 import time
+from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from fractions import Fraction
 
@@ -19,6 +20,7 @@ import av
 from av.video.reformatter import VideoReformatter
 import comfy.model_management
 import comfy.utils
+import numpy as np
 import torch
 from comfy_api.latest import InputImpl, Types
 from comfy_api.latest._input_impl.video_types import BT709_NCL, set_video_color_properties, video_encoder_options
@@ -29,6 +31,8 @@ class PostProcessing:
     _workflow_started = None
     SEARCH_ALIASES = ["lokken", "turbo", "turbo post processing", "upscale", "upscale video", "interpolate", "interpolate video", "grain", "film grain", "rife"]
     _UPSCALE_WORKERS = 6
+    _TONE_FRAMES = 8
+    _TONE_THUMBNAIL = 192
     _GROUP_MODES = ("full sequence", "normal (64)", "low vram (16)", "custom")
     _ENCODER_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow")
     _H264_PROFILES = ("auto", "baseline", "main", "high")
@@ -79,6 +83,9 @@ class PostProcessing:
                 "video": ("VIDEO", {"tooltip": "Optional video source. When connected, its frames and frame rate are used instead of images."}),
                 "images": ("IMAGE", {"tooltip": "Image batch used when no video is connected."}),
                 "audio_pass": ("AUDIO", {"tooltip": "Optional audio input, passed through unchanged."}),
+                "tone_reference": ("VIDEO", {
+                    "tooltip": "Optional encoded previous segment. Automatically matches incoming luma to its tail during H.264 encoding.",
+                }),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -87,7 +94,7 @@ class PostProcessing:
     RETURN_NAMES = ("VIDEO", "FPS", "stats")
     FUNCTION = "process"
     CATEGORY = "Lokken/Video"
-    DESCRIPTION = "Video post-processing for ComfyUI: Lanczos upscaling, optional RIFE frame interpolation (Fill Nodes required), adjustable film grain, audio passthrough, configurable H.264 presets/profiles and CRF or lossless encoding, with selectable frame batching. Accepts video or image batches; outputs video, FPS and timing statistics."
+    DESCRIPTION = "Video post-processing for ComfyUI: Lanczos upscaling, optional RIFE frame interpolation (Fill Nodes required), adjustable film grain, automatic join tone matching, audio passthrough, configurable H.264 presets/profiles and CRF or lossless encoding, with selectable frame batching. Accepts video or image batches; outputs video, FPS and timing statistics."
 
     @classmethod
     def _open_rife(cls, images, low_vram):
@@ -191,14 +198,87 @@ class PostProcessing:
             return self._grain_chunk(images, grain_intensity, saturation_mix, device)
         return images.mul(255).clamp_(0, 255).byte().cpu()
 
-    @staticmethod
-    def _encode_video(path, frame_rate, batches, cancelled, timings, crf=0,
-                      encoder_preset="medium", h264_profile="auto"):
+    @classmethod
+    def _luma_thumbnail(cls, frame):
+        size = cls._TONE_THUMBNAIL
+        thumb = frame.reformat(width=size, height=size, format="yuv420p", interpolation="AREA")
+        return thumb.to_ndarray(format="yuv420p")[:size].astype(np.float32)
+
+    @classmethod
+    def _read_tone_reference(cls, video):
+        if isinstance(video, InputImpl.VideoFromList):
+            video = video.videos[-1]
+        if not isinstance(video, InputImpl.VideoFromFile):
+            raise ValueError("Tone matching needs an encoded previous segment.")
+
+        start, duration = video.get_active_trim_window()
+        tail = deque(maxlen=cls._TONE_FRAMES)
+        with av.open(video.get_stream_source()) as container:
+            if not container.streams.video:
+                raise ValueError("Tone matching reference has no video stream.")
+            stream = container.streams.video[0]
+            origin = stream.start_time or 0
+            end = start + duration if duration else None
+            if stream.duration is not None:
+                stream_end = float(stream.duration * stream.time_base)
+                end = stream_end if end is None else min(end, stream_end)
+
+            # Seek to the preceding keyframe and retain only the last few thumbnails.
+            if end is not None and stream.average_rate and stream.time_base:
+                seek = max(0.0, end - 2 * cls._TONE_FRAMES / float(stream.average_rate))
+                if seek:
+                    container.seek(origin + int(seek / stream.time_base), stream=stream)
+            for frame in container.decode(stream):
+                if frame.pts is not None:
+                    time_in_clip = float((frame.pts - origin) * stream.time_base)
+                    if time_in_clip < start:
+                        continue
+                    if duration and end is not None and time_in_clip >= end:
+                        break
+                tail.append(cls._luma_thumbnail(frame))
+        if not tail:
+            raise ValueError("Tone matching reference has no decodable frames in its selected range.")
+        return np.stack(tail)
+
+    @classmethod
+    def _tone_offset(cls, reference, incoming):
+        count = len(incoming)
+        previous = reference[-count:]
+        following = np.stack([cls._luma_thumbnail(f) for f in incoming])
+
+        def tiles(image):
+            # The 192x192 thumbnails form 144 tiles of 16x16 pixels.
+            return image.reshape(12, 16, 12, 16).transpose(0, 2, 1, 3).reshape(144, 256)
+
+        difference = tiles(np.median(following, axis=0) - np.median(previous, axis=0))
+        offsets = np.median(difference, axis=1)
+        detail_error = np.median(np.abs(difference - offsets[:, None]), axis=1)
+        activity = tiles(np.std(previous, axis=0) + np.std(following, axis=0)).mean(axis=1)
+        stable_tiles = np.argsort(activity + detail_error, kind="stable")[:48]
+        return -round(float(np.median(offsets[stable_tiles])))
+
+    @classmethod
+    def _encode_video(cls, path, frame_rate, batches, cancelled, timings, crf=0,
+                      encoder_preset="medium", h264_profile="auto", reference_luma=None):
         rate = Fraction(round(frame_rate * 1000), 1000)
         stream = None
         reformatter = VideoReformatter()
         frame_index = 0
+        pending = []
+        correction = None if reference_luma is not None else 0
+
         with av.open(path, mode="w", format="mp4") as output:
+            def encode_frame(frame):
+                nonlocal frame_index
+                if correction:
+                    plane = frame.planes[0]
+                    luma = np.frombuffer(plane, dtype=np.uint8).reshape(frame.height, plane.line_size)[:, :frame.width]
+                    luma[:] = np.clip(luma.astype(np.int16) + correction, 0, 255)
+                frame.pts = frame_index
+                frame.time_base = Fraction(rate.denominator, rate.numerator)
+                frame_index += 1
+                output.mux(stream.encode(frame))
+
             while not cancelled.is_set():
                 try:
                     batch = batches.get(timeout=0.1)
@@ -224,23 +304,33 @@ class PostProcessing:
                     frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
                     frame = reformatter.reformat(frame, format="yuv420p", dst_colorspace=BT709_NCL)
                     set_video_color_properties(frame, "sRGB")
-                    frame.pts = frame_index
-                    frame.time_base = Fraction(rate.denominator, rate.numerator)
-                    frame_index += 1
-                    output.mux(stream.encode(frame))
+                    if correction is not None:
+                        encode_frame(frame)
+                        continue
+                    pending.append(frame)
+                    if len(pending) == len(reference_luma):
+                        correction = cls._tone_offset(reference_luma, pending)
+                        for buffered in pending:
+                            encode_frame(buffered)
+                        pending.clear()
                 timings["Encoding"] += time.perf_counter() - started
                 del batch, image, pixels, frame
             if stream is not None and not cancelled.is_set():
                 started = time.perf_counter()
+                if pending:
+                    correction = cls._tone_offset(reference_luma, pending)
+                    for buffered in pending:
+                        encode_frame(buffered)
                 output.mux(stream.encode(None))
                 timings["Encoding"] += time.perf_counter() - started
+        return correction
 
     def process(self, images=None, upscale=True, upscale_method="lanczos", upscale_by=2.0,
                 interpolate=True, original_fps=24.0, interpolate_by=2,
                 grain=True, grain_intensity=0.025, saturation_mix=0.25,
                 batching_mode="normal (64)", custom_batch_size=16, audio_pass=None, unique_id=None,
                 dual_pass_rife=False, compress=True, crf=18, video=None,
-                encoder_preset="medium", h264_profile="auto"):
+                encoder_preset="medium", h264_profile="auto", tone_reference=None):
         encoding_crf = crf if compress else 0
         if encoding_crf == 0 and h264_profile != "auto":
             raise ValueError(
@@ -282,13 +372,14 @@ class PostProcessing:
         pbar = comfy.utils.ProgressBar(progress_total, node_id=unique_id)
         pbar.update_absolute(0)
         timings = {"RIFE": 0.0, "Upscale": 0.0, "Grain": 0.0, "Encoding": 0.0}
+        reference_luma = self._read_tone_reference(tone_reference) if tone_reference is not None else None
         temp_dir = tempfile.TemporaryDirectory(prefix="lokken_video_")
         path = os.path.join(temp_dir.name, "video.mp4")
         batches = queue.Queue(maxsize=1)
         cancelled = threading.Event()
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lokken-video")
         encoder = executor.submit(self._encode_video, path, fps, batches, cancelled, timings,
-                                  encoding_crf, encoder_preset, h264_profile)
+                                  encoding_crf, encoder_preset, h264_profile, reference_luma)
 
         def submit_batch(batch):
             while True:
@@ -378,7 +469,7 @@ class PostProcessing:
                 group_frames = None
                 del source
             submit_batch(None)
-            encoder.result()
+            tone_offset = encoder.result()
             pbar.update(1)
             finished = True
         finally:
@@ -406,6 +497,8 @@ class PostProcessing:
             "\n".join("{}: {}".format(stage, "Off" if duration < 0.005 else "{:.2f}s".format(duration))
                       for stage, duration in timings.items()),
             "{:.2f}s".format(finished_at - workflow_started) if workflow_started is not None else "Unavailable")
+        if reference_luma is not None:
+            stats += f"\nJoin tone correction: {tone_offset:+d} luma levels"
         return (video, fps, stats)
 
 
